@@ -1,0 +1,239 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int              @id @default(autoincrement())
+  email        String           @unique
+  passwordHash String
+  displayName  String
+  signature    String?
+  role         String           @default("EMPLOYEE")
+  emailVerifiedAt DateTime?
+  exclusiveToken  String?       @unique
+  tokenIssuedAt   DateTime?
+  tokenDisabledAt DateTime?
+  tokenDisabledReason String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  pointsAccount   PointsAccount?
+  pointLogs       PointTransaction[]
+  createdTasks    Task[]             @relation("TaskCreator")
+  submissions     TaskSubmission[]
+  examSessions    ExamSession[]
+  answers         ExamAnswer[]
+  wrongAnswers    WrongAnswer[]
+  rewardRequests  RewardRequest[]
+  activities      DailyActivity[]
+  inactivityReports InactivityReport[]
+}
+
+model EmailOtp {
+  id         Int      @id @default(autoincrement())
+  email      String
+  code       String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([email, code])
+}
+
+model PointsAccount {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique
+  currentPoints Int     @default(0)
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model PointTransaction {
+  id        Int         @id @default(autoincrement())
+  userId    Int
+  change    Int
+  reason    String
+  note      String?
+  metadata  String?
+  createdAt DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Task {
+  id          Int              @id @default(autoincrement())
+  title       String
+  description String?
+  scheduledFor DateTime
+  dueAt       DateTime
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  createdById Int?
+
+  createdBy  User?            @relation("TaskCreator", fields: [createdById], references: [id])
+  submissions TaskSubmission[]
+}
+
+model TaskSubmission {
+  id         Int               @id @default(autoincrement())
+  taskId     Int
+  userId     Int
+  content    String
+  submittedAt DateTime         @default(now())
+  isLate     Boolean           @default(false)
+  aiScore    Int?
+  aiFeedback String?
+  status     String            @default("PENDING_REVIEW")
+  rankingBonus Boolean         @default(false)
+
+  task Task @relation(fields: [taskId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  review TaskReview?
+
+  @@unique([taskId, userId])
+}
+
+model ExamQuestion {
+  id                 Int      @id @default(autoincrement())
+  prompt             String
+  options            String
+  correctOptionIndex Int
+  explanationText    String?
+  explanationVideoUrl String?
+  tags               String?
+  createdAt          DateTime @default(now())
+
+  answers ExamAnswer[]
+  wrongEntries WrongAnswer[]
+}
+
+model ExamSession {
+  id            Int          @id @default(autoincrement())
+  userId        Int
+  sessionDate   DateTime
+  score         Int
+  correctCount  Int
+  totalQuestions Int
+  completedAt   DateTime      @default(now())
+
+  user    User         @relation(fields: [userId], references: [id])
+  answers ExamAnswer[]
+
+  @@unique([userId, sessionDate])
+}
+
+model ExamAnswer {
+  id           Int      @id @default(autoincrement())
+  sessionId    Int
+  questionId   Int
+  userId       Int
+  selectedOption Int
+  isCorrect    Boolean
+  submittedAt  DateTime @default(now())
+
+  session ExamSession @relation(fields: [sessionId], references: [id])
+  question ExamQuestion @relation(fields: [questionId], references: [id])
+  user     User         @relation(fields: [userId], references: [id])
+  wrongEntry WrongAnswer?
+
+  @@unique([sessionId, questionId])
+}
+
+model WrongAnswer {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  questionId     Int
+  answerId       Int     @unique
+  recordedAt     DateTime @default(now())
+  correctionDeadline DateTime
+  correctionText String?
+  correctionVideoUrl String?
+  isResolved     Boolean @default(false)
+  resolvedAt     DateTime?
+  penaltyApplied Boolean @default(false)
+
+  user     User         @relation(fields: [userId], references: [id])
+  question ExamQuestion @relation(fields: [questionId], references: [id])
+  answer   ExamAnswer   @relation(fields: [answerId], references: [id])
+}
+
+model RewardRequest {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  weekStart      DateTime
+  pointsAtRequest Int
+  rewardOption   String?
+  status         String       @default("PENDING")
+  createdAt      DateTime     @default(now())
+  reviewedAt     DateTime?
+  reviewNote     String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, weekStart])
+}
+
+model TaskReview {
+  id            Int           @id @default(autoincrement())
+  submissionId  Int           @unique
+  reviewerType  String        @default("AI")
+  score         Int
+  feedback      String?
+  createdAt     DateTime      @default(now())
+
+  submission TaskSubmission @relation(fields: [submissionId], references: [id])
+}
+
+model WeeklySummary {
+  id        Int      @id @default(autoincrement())
+  weekStart DateTime
+  weekEnd   DateTime
+  generatedAt DateTime @default(now())
+  leaderboard String
+
+  @@unique([weekStart, weekEnd])
+}
+
+/// 每日活跃统计（按用户+日期汇总分钟数）
+model DailyActivity {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  date      DateTime // 当天 00:00:00 本地日期
+  minutes   Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, date])
+}
+
+/// 令牌发放日志（用于限制每邮箱每月最多3次）
+model TokenIssue {
+  id        Int      @id @default(autoincrement())
+  email     String
+  issuedAt  DateTime @default(now())
+
+  @@index([email, issuedAt])
+}
+
+/// 用户提交未使用激励系统的原因（显示在管理员收件箱）
+model InactivityReport {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  email     String
+  reason    String
+  status    String   @default("PENDING") // PENDING | RESOLVED
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  adminNote String?
+
+  user User? @relation(fields: [userId], references: [id])
+}
